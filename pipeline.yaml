@@ -1,0 +1,61 @@
+def mvnCmd = "mvn"
+
+pipeline {
+  agent {
+    label 'maven'
+  }
+  stages {
+    stage('Code Analysis with SonarQube') {
+      steps {
+        git branch: 'develop', url: 'git@ssh.dev.azure.com:v3/aivankov/%D0%9C%D0%BE%D0%B1%D0%B8%D0%BB%D1%8C%D0%BD%D0%BE%D0%B5%20%D0%A2%D0%9E%D0%A0%D0%9E/toro', credentialsId: '6df1ac99-fd10-4ab5-9e2c-9d17015caf6d'
+        withSonarQubeEnv(installationName: 'sonarqube-cicd-cadmin') {
+            //sh "${mvnCmd} -f ./toro-backend-api/pom.xml clean verify sonar:sonar -Dsonar.host.url=https://sonarqube-cicd-cadmin.52.226.79.151.nip.io -DskipTests=true"
+            sh "${mvnCmd} -f ./toro-backend-api/pom.xml clean verify sonar:sonar -DskipTests=true"
+        }
+      }
+    }
+    
+    stage('Build & deploy in DEV') {
+      steps {
+        openshiftBuild(namespace: 'toro-dev', bldCfg: 'toro-backend', showBuildLogs: 'true', waitTime: '3000000')
+      }
+    }
+    
+    stage('Verify deploy in DEV') {
+      steps {
+        openshiftVerifyDeployment(namespace: 'toro-dev', depCfg: 'toro-backend', replicaCount:'1', verifyReplicaCount: 'true', waitTime: '300000')
+      }
+    }
+    
+    stage('Deploy in TEST') {
+      steps {
+        openshiftTag(namespace: 'toro-dev', srcStream: 'toro-backend', srcTag: 'latest', destStream: 'toro-backend', destTag: 'promoteQA')
+        openshiftDeploy(namespace: 'toro-test', depCfg: 'toro-backend', waitTime: '300000')
+        openshiftScale(namespace: 'toro-test', depCfg: 'toro-backend', waitTime: '300000', replicaCount: '2')
+      }
+    }
+    
+    stage('Verify deploy in TEST') {
+      steps {
+        openshiftVerifyDeployment(namespace: 'toro-test', depCfg: 'toro-backend', replicaCount:'2', verifyReplicaCount: 'true', waitTime: '300000')
+      }
+    }
+    
+    stage('Deploy to PROD') {
+      steps {
+        timeout(time: 2, unit: 'DAYS') {
+          input message: 'Approve to production?'
+        }
+        openshiftTag(namespace: 'toro-dev', srcStream: 'toro-backend', srcTag: 'latest', destStream: 'toro-backend', destTag: 'promotePRD')
+        openshiftDeploy(namespace: 'toro-prod', depCfg: 'toro-backend', waitTime: '300000')
+        openshiftScale(namespace: 'toro-prod', depCfg: 'toro-backend', waitTime: '300000', replicaCount: '2')
+      }
+    }
+    
+    stage('Verify deploy in PROD') {
+      steps {
+        openshiftVerifyDeployment(namespace: 'toro-prod', depCfg: 'toro-backend', replicaCount:'2', verifyReplicaCount: 'true', waitTime: '300000')
+      }
+    }
+  }
+}
