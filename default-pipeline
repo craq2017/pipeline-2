@@ -1,0 +1,35 @@
+def mvnCmd = "mvn"
+
+pipeline {
+  agent {
+    label 'maven'
+  }
+  environment {
+    namespace = 'incident-core-dev'
+    buildConfig = 'incident-core-dev'
+    deployConfig = 'incident-core-dev'
+    gitSource = 'ssh://erp.gnivc.ru:22/tfs/DefaultCollection/%D0%A4%D0%9B%D0%98%D0%9D%D0%A2/_git/ais3.flint.services.incident'
+    gitBranch = 'dev'
+    gitCreds = 'b492f007-c23a-45d1-9b2f-ca0a137bb5cb'
+  }
+  stages {
+    stage('Code Analysis with SonarQube') {
+      steps {
+        git branch: "${gitBranch}", url: "${gitSource}", credentialsId: "${gitCreds}"
+        sh "${mvnCmd} -f ./pom.xml clean verify sonar:sonar -Dsonar.host.url=http://sonarqube:9000 -DskipTests=true"
+      }
+    }
+
+    stage('Build & deploy in DEV') {
+      steps {
+        openshiftBuild(namespace: "${namespace}", bldCfg: "${buildConfig}", showBuildLogs: 'true', waitTime: '3000000')
+      }
+    }
+    
+    stage('Verify deploy in DEV') {
+      steps {
+        openshiftVerifyDeployment(namespace: "${namespace}", depCfg: "${deployConfig}", replicaCount:'1', verifyReplicaCount: 'true', waitTime: '300000')
+      }
+    }
+  }
+}
