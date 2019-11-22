@@ -1,0 +1,54 @@
+//def mvnCmd = "mvn"
+
+pipeline {
+  agent any
+  /*
+  agent {
+    label 'maven'
+  }
+  */
+  tools {nodejs "node"}
+  
+  environment {
+    namespace = 'flint-ui-dev'
+    buildConfig = 'flint-ui-node-dev'
+    deployConfig = 'flint-ui-nginx-dev'
+    gitSource = 'ssh://erp.gnivc.ru:22/tfs/DefaultCollection/%D0%A4%D0%9B%D0%98%D0%9D%D0%A2/_git/ais3.flint.ui'
+    gitBranch = 'develop'
+    gitCreds = 'b492f007-c23a-45d1-9b2f-ca0a137bb5cb'
+    scannerHome = tool 'SonarQube Scanner 4.2'
+  }
+
+  stages {
+    stage('Code Analysis with SonarQube') {
+      steps {
+        git branch: "${gitBranch}", url: "${gitSource}", credentialsId: "${gitCreds}"
+        sh "rm -rf package-lock.json"
+        sh "npm install"
+        //sh "${mvnCmd} -f ./pom.xml clean verify sonar:sonar -Dsonar.host.url=http://sonarqube:9000 -DskipTests=true"
+        withSonarQubeEnv("sonarqube") {
+          sh "${scannerHome}/bin/sonar-scanner -Dsonar.projectKey=flint-ui-dev -Dsonar.language=ts -Dsonar.sources=src -Dsonar.host.url=http://sonarqube:9000"
+          //sh "${mvnCmd} sonar:sonar -Dsonar.host.url=http://sonarqube:9000 -Dsonar.projectKey=flint-ui-dev -Dsonar.language=ts -Dsonar.sources=src"
+        }
+        script {
+          def qualitygate = waitForQualityGate()
+          if (qualitygate.status != "OK") {
+            error "Pipeline aborted due to quality gate coverage failure: ${qualitygate.status}"
+          }
+        }
+      }
+    }
+
+    stage('Build & deploy in DEV') {
+      steps {
+        openshiftBuild(namespace: "${namespace}", bldCfg: "${buildConfig}", showBuildLogs: 'true', waitTime: '3000000')
+      }
+    }
+    
+    stage('Verify deploy in DEV') {
+      steps {
+        openshiftVerifyDeployment(namespace: "${namespace}", depCfg: "${deployConfig}", replicaCount:'1', verifyReplicaCount: 'true', waitTime: '300000')
+      }
+    }
+  }
+}
